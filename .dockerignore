@@ -1,0 +1,5 @@
+.env
+.vs/
+*.rpt
+__pycache__/
+*.pyc
