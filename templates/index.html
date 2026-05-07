@@ -171,6 +171,16 @@ body{font-family:var(--fb);font-size:16px;background:var(--bg);color:var(--ink);
 .doc-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:44px 20px;color:var(--muted);opacity:.5;text-align:center}
 .doc-empty p{font-size:12px;line-height:1.6}
 
+/* Fotos */
+.fotos-section{padding:14px 18px;border-bottom:1px solid var(--rule);display:flex;flex-direction:column;gap:12px}
+.foto-upload-btn{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;background:var(--blue-light);color:var(--blue-mid);border:1.5px dashed var(--blue-mid);border-radius:var(--r);cursor:pointer;font-family:var(--fb);font-size:14px;font-weight:500;transition:all var(--t);align-self:flex-start}
+.foto-upload-btn:hover{background:var(--blue-mid);color:#fff;border-style:solid}
+.fotos-preview{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.foto-thumb{position:relative;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;aspect-ratio:4/3;background:#f8f8f8}
+.foto-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.foto-remove{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;border:none;cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;transition:background var(--t)}
+.foto-remove:hover{background:rgba(200,30,30,.85)}
+
 /* Toast */
 .toast{position:fixed;bottom:24px;right:24px;background:var(--blue);color:#fff;padding:11px 18px;border-radius:8px;font-size:13px;font-weight:500;box-shadow:var(--shadow-lg);display:flex;align-items:center;gap:9px;transform:translateY(70px);opacity:0;transition:all .3s cubic-bezier(.34,1.56,.64,1);z-index:999;pointer-events:none}
 .toast.show{transform:translateY(0);opacity:1}
@@ -449,18 +459,30 @@ function fillDoc(it){
 
   <!-- ══ FIRMAS ══ -->
   <div class="sec-hdr"><span>Firmas</span></div>
-  <div class="frow frow-2" style="min-height:64px">
-    <div class="fcell" style="align-items:flex-start;padding-top:8px">
+  <div class="frow frow-2" style="min-height:80px">
+    <div class="fcell" style="align-items:flex-start;padding-top:10px">
       <span class="flbl">Operarios</span>
     </div>
-    <div class="fcell" style="align-items:flex-start;padding-top:8px">
+    <div class="fcell" style="align-items:flex-start;padding-top:10px">
       <span class="flbl">VºBº Cliente</span>
     </div>
+  </div>
+
+  <!-- ══ FOTOS ══ -->
+  <div class="sec-hdr"><span>Fotografías</span></div>
+  <div class="fotos-section">
+    <label class="foto-upload-btn" for="fotoInput">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      Añadir fotos
+    </label>
+    <input type="file" id="fotoInput" multiple accept="image/*" style="display:none" onchange="handleFotos(this)">
+    <div id="fotosPreview" class="fotos-preview"></div>
   </div>
   `;
 
   numOperarios = 2;
   numHoras = 3;
+  fotosData = [];
   renderOperarioRows();
   renderHorasRows();
   setTimeout(()=>document.getElementById('f_gps')?.focus(), 60);
@@ -468,6 +490,37 @@ function fillDoc(it){
 
 let numOperarios = 2;
 let numHoras = 3;
+let fotosData = [];
+
+function handleFotos(input){
+  const files = [...input.files];
+  let loaded = 0;
+  files.forEach(file=>{
+    const reader = new FileReader();
+    reader.onload = ev=>{
+      fotosData.push({ name: file.name, dataUrl: ev.target.result });
+      loaded++;
+      if(loaded === files.length) renderFotosPreview();
+    };
+    reader.readAsDataURL(file);
+  });
+  input.value = '';
+}
+
+function renderFotosPreview(){
+  const c = document.getElementById('fotosPreview');
+  if(!c) return;
+  c.innerHTML = fotosData.map((f,i)=>`
+    <div class="foto-thumb">
+      <img src="${f.dataUrl}" alt="${esc(f.name)}">
+      <button class="foto-remove" onclick="removeFoto(${i})" title="Eliminar">×</button>
+    </div>`).join('');
+}
+
+function removeFoto(i){
+  fotosData.splice(i,1);
+  renderFotosPreview();
+}
 
 function renderHorasRows(){
   const container = document.getElementById('horasRows');
@@ -609,7 +662,7 @@ async function generarPDF(){
     gps:         v('f_gps'),
     fecha:       v('f_fecha'),
     observaciones: v('f_obs'),
-    conceptos, horas, operarios, gastos,
+    conceptos, horas, operarios, gastos, fotos: fotosData,
   };
 
   try{

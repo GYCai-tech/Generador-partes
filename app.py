@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-import os, io
+import os, io, base64
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_file
 import pyodbc
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer, Paragraph, HRFlowable, Image
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer, Paragraph, HRFlowable, Image, PageBreak
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from reportlab.pdfbase import pdfmetrics
@@ -350,6 +350,43 @@ def build_pdf(data):
         ('LINEBEFORE',(2,0),(2,-1),1,MGRAY),
     ]))
     story.append(firmas_t)
+
+    # ── FOTOGRAFÍAS (hoja aparte) ────────────────────────
+    fotos = data.get('fotos', [])
+    if fotos:
+        story.append(PageBreak())
+        story.append(sec_hdr('Fotografías'))
+        story.append(Spacer(1, 6*mm))
+
+        img_w = (usable_w - 10*mm) / 2
+        img_h = img_w * 0.72
+
+        for i in range(0, len(fotos), 2):
+            row = []
+            for j in range(2):
+                if i + j < len(fotos):
+                    data_url = fotos[i + j].get('dataUrl', '')
+                    try:
+                        b64 = data_url.split(',')[1] if ',' in data_url else data_url
+                        img_buf = io.BytesIO(base64.b64decode(b64))
+                        row.append(Image(img_buf, width=img_w, height=img_h))
+                    except Exception:
+                        row.append(Spacer(img_w, img_h))
+                else:
+                    row.append(Spacer(img_w, img_h))
+            t = Table([row], colWidths=[img_w + 5*mm, img_w + 5*mm])
+            t.setStyle(TableStyle([
+                ('ALIGN',(0,0),(-1,-1),'CENTER'),
+                ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
+                ('LEFTPADDING',(0,0),(-1,-1),4),
+                ('RIGHTPADDING',(0,0),(-1,-1),4),
+                ('TOPPADDING',(0,0),(-1,-1),4),
+                ('BOTTOMPADDING',(0,0),(-1,-1),4),
+                ('BOX',(0,0),(0,0),0.3,MGRAY),
+                ('BOX',(1,0),(1,0),0.3,MGRAY),
+            ]))
+            story.append(t)
+            story.append(Spacer(1, 6*mm))
 
     doc.build(story)
     buf.seek(0)
