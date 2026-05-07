@@ -237,9 +237,8 @@ def build_pdf(data):
     story.append(c_hdr)
 
     c_rows = [[str(c.get('cant','')), str(c.get('concepto',''))] for c in conceptos]
-    # pad to at least 7 rows
-    while len(c_rows) < 7:
-        c_rows.append(['',''])
+    if not c_rows:
+        c_rows = [['','']]
     c_t = Table(c_rows, colWidths=cw, rowHeights=[7*mm]*len(c_rows))
     c_t.setStyle(TableStyle(PAD + [
         ('FONTSIZE',(0,0),(-1,-1),8),
@@ -279,8 +278,8 @@ def build_pdf(data):
 
     horas = data.get('horas', [])
     h_rows = [[h.get('dia',''),h.get('inicio',''),h.get('final',''),h.get('operarios',''),h.get('definicion','')] for h in horas]
-    while len(h_rows) < 8:
-        h_rows.append(['','','','',''])
+    if not h_rows:
+        h_rows = [['','','','','']]
     h_t = Table(h_rows, colWidths=[col5]*5, rowHeights=[7*mm]*len(h_rows))
     h_t.setStyle(TableStyle(PAD + [
         ('FONTSIZE',(0,0),(-1,-1),8),
@@ -330,7 +329,7 @@ def build_pdf(data):
         ]))
         return t
 
-    num_gastos = max(len(gastos), 2)
+    num_gastos = max(len(gastos), 1)
     for i in range(0, num_gastos, 2):
         g1 = gastos[i]   if i   < len(gastos) else {}
         g2 = gastos[i+1] if i+1 < len(gastos) else {}
