@@ -611,6 +611,7 @@ def get_parte(id_parte):
     conn.close()
 
     result = {
+        'id_parte': id_parte,
         'albaran': albaran,
         'presupuesto': '',
         'cliente': (p.get('Cliente') or '').strip(),

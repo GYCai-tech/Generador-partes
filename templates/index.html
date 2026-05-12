@@ -271,7 +271,7 @@ body{font-family:var(--fb);font-size:16px;background:var(--bg);color:var(--ink);
     <!-- Header -->
     <div class="doc-header">
       <div class="dlogo"><img src="/static/logo.png" alt="Gómez y Crespo"></div>
-      <div class="dtitle">Parte de Trabajo</div>
+      <div class="dtitle">Parte de Trabajo<span id="docIdParte" style="display:none;margin-left:10px;font-size:11px;font-weight:400;opacity:.6;letter-spacing:.06em"></span></div>
       <div class="dright">GÓMEZ Y CRESPO</div>
     </div>
 
@@ -421,6 +421,9 @@ function pedidoToParteData(it){
 function fillDoc(it){
   document.getElementById('docCard').classList.add('filled');
   document.getElementById('editBadge').style.display='inline-flex';
+  const idEl = document.getElementById('docIdParte');
+  if(it.id_parte){ idEl.textContent = `· ID ${it.id_parte}`; idEl.style.display='inline'; }
+  else { idEl.style.display='none'; }
 
   const conceptosHtml = (it.conceptos||[]).map(c=>`
     <div class="tbl-row" style="grid-template-columns:42px 1fr">
@@ -524,6 +527,9 @@ function fillDoc(it){
       <div class="tc">Definición del trabajo</div>
     </div>
     <div id="horasRows"></div>
+  </div>
+  <div style="padding:2px 6px">
+    <button class="add-row-btn" onclick="addHora()">+ Añadir día</button>
   </div>
 
   <!-- ══ OBSERVACIONES ══ -->
@@ -712,6 +718,8 @@ function resetDoc(){
   document.getElementById('docCard').classList.remove('filled');
   document.getElementById('editBadge').style.display='none';
   _initialOperarios = []; _initialHoras = []; _initialGastos = [];
+  const idEl = document.getElementById('docIdParte');
+  if(idEl){ idEl.style.display='none'; idEl.textContent=''; }
   document.getElementById('docBody').innerHTML=`
     <div class="doc-empty">
       <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
