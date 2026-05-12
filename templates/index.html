@@ -47,6 +47,20 @@ body{font-family:var(--fb);font-size:16px;background:var(--bg);color:var(--ink);
 .ftab:hover{color:var(--blue);background:var(--blue-light)}
 .ftab.active{background:var(--blue);color:#fff;box-shadow:0 1px 4px rgba(26,58,92,.3)}
 
+/* MODE TABS */
+.mode-tabs{display:flex;gap:0;margin-bottom:16px;border:1.5px solid var(--border);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow-sm)}
+.mtab{flex:1;border:none;background:var(--white);padding:10px 16px;font-family:var(--fh);font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);cursor:pointer;transition:all var(--t);border-right:1px solid var(--border)}
+.mtab:last-child{border-right:none}
+.mtab:hover{background:var(--blue-light);color:var(--blue)}
+.mtab.active-parte{background:var(--blue);color:#fff}
+.mtab.active-pedido{background:var(--orange);color:#fff}
+
+/* CARD distinción parte vs pedido */
+.rcard.tipo-pedido::before{background:var(--orange) !important}
+.rcard.tipo-pedido:hover{border-color:var(--orange) !important}
+.rcard.tipo-pedido .rnum{background:var(--orange)}
+.rcard.tipo-pedido.sel{border-color:var(--orange);box-shadow:0 0 0 3px rgba(232,114,12,.12),var(--shadow-md)}
+
 .search-box{position:relative;margin-bottom:12px}
 .search-box input{width:100%;padding:10px 40px 10px 14px;font-family:var(--fb);font-size:14px;border:1.5px solid var(--border);border-radius:var(--r);background:var(--white);color:var(--ink);outline:none;transition:border-color var(--t),box-shadow var(--t);box-shadow:var(--shadow-sm)}
 .search-box input:focus{border-color:var(--blue-mid);box-shadow:0 0 0 3px rgba(37,79,126,.12)}
@@ -203,13 +217,18 @@ body{font-family:var(--fb);font-size:16px;background:var(--bg);color:var(--ink);
 <section>
   <div class="step-label">
     <div class="step-num">1</div>
-    <span class="step-title">Selecciona el parte</span>
+    <span class="step-title">Selecciona el parte o el pedido</span>
+  </div>
+
+  <div class="mode-tabs">
+    <button class="mtab active-parte" id="modePartes" data-modo="partes">Partes de trabajo</button>
+    <button class="mtab" id="modePedidos" data-modo="pedidos">Pedidos de cliente</button>
   </div>
 
   <div class="search-top">
     <div class="filter-tabs" role="group">
       <button class="ftab active" data-tipo="todo">Todos</button>
-      <button class="ftab" data-tipo="numero">Nº Parte</button>
+      <button class="ftab" data-tipo="numero" id="ftabNumero">Nº Parte</button>
       <button class="ftab" data-tipo="cliente">Cliente</button>
     </div>
     <div class="search-box">
@@ -270,10 +289,28 @@ body{font-family:var(--fb);font-size:16px;background:var(--bg);color:var(--ink);
 <div class="toast" id="toast"></div>
 
 <script>
-let tipo = 'todo', debounce = null, selCard = null;
+let tipo = 'todo', modo = 'partes', debounce = null, selCard = null;
 let _parteData = null;
+let nextNum = '';
 
-// Tabs
+fetch('/api/siguiente-numero').then(r=>r.json()).then(d=>{ nextNum = d.formato; });
+
+// Mode tabs
+document.querySelectorAll('.mtab').forEach(b=>{
+  b.addEventListener('click',()=>{
+    modo = b.dataset.modo;
+    document.querySelectorAll('.mtab').forEach(x=>{ x.classList.remove('active-parte','active-pedido'); });
+    b.classList.add(modo === 'partes' ? 'active-parte' : 'active-pedido');
+    const ftabNum = document.getElementById('ftabNumero');
+    ftabNum.textContent = modo === 'partes' ? 'Nº Parte' : 'Nº Pedido';
+    const inp = document.getElementById('searchInput');
+    inp.placeholder = modo === 'partes' ? 'Nombre de cliente o número de parte…' : 'Nombre de cliente o número de pedido…';
+    const q = inp.value.trim();
+    if(q) buscar(q); else showEmpty(modo === 'partes' ? 'Busca un parte para generar el PDF' : 'Busca un pedido para generar el parte');
+  });
+});
+
+// Filter tabs
 document.querySelectorAll('.ftab').forEach(b=>{
   b.addEventListener('click',()=>{
     document.querySelectorAll('.ftab').forEach(x=>x.classList.remove('active'));
@@ -286,13 +323,13 @@ document.querySelectorAll('.ftab').forEach(b=>{
 document.getElementById('searchInput').addEventListener('input', e=>{
   clearTimeout(debounce);
   const q = e.target.value.trim();
-  if(!q){ showEmpty('Busca un parte para generar el PDF'); return; }
+  if(!q){ showEmpty(modo === 'partes' ? 'Busca un parte para generar el PDF' : 'Busca un pedido para generar el parte'); return; }
   debounce = setTimeout(()=>buscar(q), 300);
 });
 
 document.getElementById('btnLimpiar').addEventListener('click',()=>{
   document.getElementById('searchInput').value='';
-  showEmpty('Busca un parte para generar el PDF');
+  showEmpty(modo === 'partes' ? 'Busca un parte para generar el PDF' : 'Busca un pedido para generar el parte');
   resetDoc();
   if(selCard){selCard.classList.remove('sel');selCard=null;}
   document.getElementById('btnGenerar').disabled=true;
@@ -309,7 +346,10 @@ function showEmpty(msg){
 async function buscar(q){
   document.getElementById('spinner').classList.add('on');
   try{
-    const data = await fetch(`/api/buscar-parte?q=${encodeURIComponent(q)}&tipo=${tipo}`).then(r=>r.json());
+    const url = modo === 'partes'
+      ? `/api/buscar-parte?q=${encodeURIComponent(q)}&tipo=${tipo}`
+      : `/api/buscar?q=${encodeURIComponent(q)}&tipo=${tipo}`;
+    const data = await fetch(url).then(r=>r.json());
     renderResults(data);
   }catch{ showEmpty('Error de conexión'); }
   finally{ document.getElementById('spinner').classList.remove('on'); }
@@ -317,12 +357,13 @@ async function buscar(q){
 
 function renderResults(items){
   const area = document.getElementById('resultsArea');
-  if(!items.length){ showEmpty('No se encontraron partes'); return; }
+  if(!items.length){ showEmpty(modo === 'partes' ? 'No se encontraron partes' : 'No se encontraron pedidos'); return; }
+  const esParte = modo === 'partes';
   area.innerHTML = items.map((it,i)=>`
-    <div class="rcard" data-idx="${i}" style="animation-delay:${i*22}ms">
+    <div class="rcard${esParte ? '' : ' tipo-pedido'}" data-idx="${i}" style="animation-delay:${i*22}ms">
       <div class="rtop">
         <div class="rcli">${esc(it.Cliente||it.IdCliente)}</div>
-        <div class="rnum">Parte nº ${esc(it.NumParteFormato)}</div>
+        <div class="rnum">${esParte ? 'Parte nº '+esc(it.NumParteFormato) : 'Pedido nº '+esc(String(it.NumPedido))}</div>
       </div>
       <div class="rdir">${esc(it.DireccionTrabajo)}${it.LocalidadTrabajo?' — '+it.LocalidadTrabajo:''}</div>
       <div class="rmeta">
@@ -338,7 +379,12 @@ function renderResults(items){
       const it = area._data[parseInt(card.dataset.idx)];
       document.getElementById('spinner').classList.add('on');
       try {
-        const pd = await fetch(`/api/parte/${it.IdParte}`).then(r=>r.json());
+        let pd;
+        if(modo === 'partes'){
+          pd = await fetch(`/api/parte/${it.IdParte}`).then(r=>r.json());
+        } else {
+          pd = pedidoToParteData(it);
+        }
         _parteData = pd;
         fillDoc(pd);
         document.getElementById('btnGenerar').disabled=false;
@@ -346,12 +392,30 @@ function renderResults(items){
         fs.style.display='flex';
         setTimeout(()=>fs.scrollIntoView({behavior:'smooth',block:'start'}), 50);
       } catch(e) {
-        showToast('Error al cargar el parte','');
+        showToast('Error al cargar los datos','');
       } finally {
         document.getElementById('spinner').classList.remove('on');
       }
     });
   });
+}
+
+function pedidoToParteData(it){
+  return {
+    albaran: nextNum,
+    presupuesto: '',
+    cliente: it.Cliente || it.IdCliente || '',
+    direccion: it.DireccionTrabajo || '',
+    localidad: it.LocalidadTrabajo || '',
+    contacto: it.Contacto || '',
+    gps: '',
+    fecha: it.FechaFormateada || '',
+    observaciones: it.Observaciones || '',
+    conceptos: [{ cant: '1', concepto: it.Observaciones || '' }],
+    operarios: [{ nombre: '' }, { nombre: '' }],
+    horas: [],
+    gastos: [],
+  };
 }
 
 function fillDoc(it){
