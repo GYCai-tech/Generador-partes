@@ -42,6 +42,18 @@ ORANGE = BLACK
 def get_conn():
     return pyodbc.connect(DB_CONN)
 
+def dedup_lines(text):
+    if not text:
+        return ''
+    lines = text.strip().splitlines()
+    seen, result = set(), []
+    for line in lines:
+        key = line.strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            result.append(line)
+    return '\n'.join(result)
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -400,6 +412,220 @@ def generar():
     buf = build_pdf(data)
     filename = f"Parte_{albaran.replace('/', '-')}.pdf"
     return send_file(buf, as_attachment=True, download_name=filename, mimetype='application/pdf')
+
+@app.route('/api/buscar-parte')
+def buscar_parte():
+    q = request.args.get('q', '').strip()
+    tipo = request.args.get('tipo', 'todo')
+    if not q:
+        return jsonify([])
+
+    conn = get_conn()
+    cursor = conn.cursor()
+    conditions, params = [], []
+
+    if tipo == 'numero':
+        try:
+            conditions.append('p.NumParte = ?')
+            params.append(int(q))
+        except ValueError:
+            return jsonify([])
+    elif tipo == 'cliente':
+        conditions.append('c.Cliente LIKE ?')
+        params.append(f'%{q}%')
+    else:
+        try:
+            num = int(q)
+            conditions.append('(p.NumParte = ? OR c.Cliente LIKE ?)')
+            params.extend([num, f'%{q}%'])
+        except ValueError:
+            conditions.append('c.Cliente LIKE ?')
+            params.append(f'%{q}%')
+
+    where = ' AND '.join(conditions)
+    cursor.execute(f"""
+        SELECT TOP 20
+            p.IdParte, p.NumParte, p.AñoNum,
+            p.FechaParte, p.IdCliente,
+            p.DireccionReparacion, p.Descrip,
+            p.PersonaContacto, p.Telefono,
+            c.Cliente, c.Direccion, c.Ciudad
+        FROM Partes p
+        LEFT JOIN Clientes_Datos c ON p.IdCliente = c.IdCliente
+        WHERE {where}
+        ORDER BY p.IdParte DESC
+    """, params)
+
+    cols = [d[0] for d in cursor.description]
+    results = []
+    for row in cursor.fetchall():
+        d = dict(zip(cols, row))
+        ano = d.get('AñoNum') or datetime.now().year
+        d['NumParteFormato'] = f"{d['NumParte']:02d}/{str(ano)[2:]}"
+        fecha = d.get('FechaParte')
+        d['FechaFormateada'] = fecha.strftime('%d-%m-%Y') if fecha else ''
+        dir_rep = (d.get('DireccionReparacion') or '').strip()
+        if dir_rep:
+            d['DireccionTrabajo'] = dir_rep
+            d['LocalidadTrabajo'] = ''
+        else:
+            d['DireccionTrabajo'] = (d.get('Direccion') or '').strip()
+            d['LocalidadTrabajo'] = (d.get('Ciudad') or '').strip()
+        d['Contacto'] = (d.get('PersonaContacto') or d.get('Telefono') or '').strip()
+        results.append(d)
+
+    conn.close()
+    return jsonify(results)
+
+
+@app.route('/api/parte/<int:id_parte>')
+def get_parte(id_parte):
+    import json
+    from flask import Response
+
+    conn = get_conn()
+    cursor = conn.cursor()
+
+    # Cabecera
+    cursor.execute("""
+        SELECT p.IdParte, p.NumParte, p.AñoNum, p.FechaParte,
+               p.DireccionReparacion, p.Observaciones, p.Telefono,
+               p.PersonaContacto, p.Descrip,
+               c.Cliente, c.Direccion, c.Ciudad
+        FROM Partes p
+        LEFT JOIN Clientes_Datos c ON p.IdCliente = c.IdCliente
+        WHERE p.IdParte = ?
+    """, id_parte)
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'Parte no encontrado'}), 404
+    cols = [d[0] for d in cursor.description]
+    p = dict(zip(cols, row))
+
+    ano = p.get('AñoNum') or datetime.now().year
+    albaran = f"{p['NumParte']:02d}/{str(ano)[2:]}"
+    fecha = p.get('FechaParte')
+    fecha_fmt = fecha.strftime('%d-%m-%Y') if fecha else ''
+    dir_rep = (p.get('DireccionReparacion') or '').strip()
+    direccion = dir_rep if dir_rep else (p.get('Direccion') or '').strip()
+    localidad = '' if dir_rep else (p.get('Ciudad') or '').strip()
+    contacto = (p.get('PersonaContacto') or p.get('Telefono') or '').strip()
+
+    # Operarios
+    cursor.execute("""
+        SELECT e.Nombre
+        FROM PartesOperarios po
+        LEFT JOIN Empleados_Datos e ON po.IdEmpleado = e.IdEmpleado
+        WHERE po.IdParte = ?
+        ORDER BY po.Responsable DESC, e.Nombre
+    """, id_parte)
+    operarios = [{'nombre': (r[0] or '').strip()} for r in cursor.fetchall()]
+    if not operarios:
+        operarios = [{'nombre': ''}, {'nombre': ''}]
+
+    # Líneas de mano de obra → horas y conceptos
+    cursor.execute("""
+        SELECT mo.FechaFin, mo.Hora, mo.Cantidad, mo.Descrip,
+               e.Nombre AS NombreEmpleado
+        FROM Partes_Lineas_MO mo
+        LEFT JOIN Empleados_Datos e ON mo.IdEmpleado = e.IdEmpleado
+        WHERE mo.IdParte = ?
+        ORDER BY mo.IdLinea
+    """, id_parte)
+    mo_cols = [d[0] for d in cursor.description]
+    mo_rows = [dict(zip(mo_cols, r)) for r in cursor.fetchall()]
+
+    horas = []
+    conceptos = []
+    for r in mo_rows:
+        fecha_mo = r.get('FechaFin')
+        dia = fecha_mo.strftime('%d/%m') if fecha_mo else ''
+        hora_ini = (r.get('Hora') or '').strip()
+        cant = r.get('Cantidad') or 0
+        horas.append({
+            'dia': dia,
+            'inicio': hora_ini,
+            'final': '',
+            'operarios': (r.get('NombreEmpleado') or '').strip(),
+            'definicion': (r.get('Descrip') or '').strip(),
+        })
+        desc = (r.get('Descrip') or '').strip()
+        if desc:
+            conceptos.append({'cant': str(int(cant)) if cant else '1', 'concepto': desc})
+
+    # Líneas de materiales → también como conceptos
+    cursor.execute("""
+        SELECT mat.Cantidad, mat.Descrip
+        FROM Partes_Lineas_Mat mat
+        WHERE mat.IdParte = ?
+        ORDER BY mat.IdLinea
+    """, id_parte)
+    for r in cursor.fetchall():
+        desc = (r[1] or '').strip()
+        if desc:
+            cant = r[0] or 1
+            conceptos.append({'cant': str(int(cant)) if cant else '1', 'concepto': desc})
+
+    if not conceptos:
+        desc_parte = (p.get('Descrip') or '').strip()
+        conceptos = [{'cant': '1', 'concepto': desc_parte}]
+
+    # Gastos imputables por operario
+    cursor.execute("""
+        SELECT pg.IdTipoGasto, pg.Descrip, pg.Importe, gt.Descrip AS TipoDescip
+        FROM Partes_Gastos pg
+        LEFT JOIN Partes_GastosTipos gt ON pg.IdTipoGasto = gt.IdTipoGasto
+        WHERE pg.IdParte = ?
+        ORDER BY pg.IdLinea
+    """, id_parte)
+    gastos_raw = [{'tipo': (r[3] or r[1] or '').strip(), 'importe': float(r[2] or 0)} for r in cursor.fetchall()]
+
+    # Km desde Partes_Lineas_Desp agrupados por operario
+    cursor.execute("""
+        SELECT d.IdEmpleado, e.Nombre, SUM(d.Km) AS TotalKm, COUNT(*) AS Viajes
+        FROM Partes_Lineas_Desp d
+        LEFT JOIN Empleados_Datos e ON d.IdEmpleado = e.IdEmpleado
+        WHERE d.IdParte = ?
+        GROUP BY d.IdEmpleado, e.Nombre
+        ORDER BY e.Nombre
+    """, id_parte)
+    desp_rows = [{'nombre': (r[1] or '').strip(), 'km': float(r[2] or 0), 'viajes': r[3]} for r in cursor.fetchall()]
+
+    # Construir gastos por operario (one per operario slot)
+    num_ops = len(operarios)
+    gastos = []
+    for i in range(num_ops):
+        km = desp_rows[i]['km'] if i < len(desp_rows) else ''
+        gastos.append({
+            'km_cant': str(int(km)) if km else '',
+            'km_total': '',
+            'dietas_cant': '',
+            'dietas_total': '',
+            'comidas_cant': '',
+            'comidas_total': '',
+        })
+    if not gastos:
+        gastos = [{}]
+
+    conn.close()
+
+    result = {
+        'albaran': albaran,
+        'presupuesto': '',
+        'cliente': (p.get('Cliente') or '').strip(),
+        'direccion': direccion,
+        'localidad': localidad,
+        'contacto': contacto,
+        'gps': '',
+        'fecha': fecha_fmt,
+        'observaciones': dedup_lines(p.get('Observaciones') or ''),
+        'conceptos': conceptos,
+        'operarios': operarios,
+        'horas': horas,
+        'gastos': gastos,
+    }
+    return Response(json.dumps(result, default=str), mimetype='application/json')
 
 if __name__ == '__main__':
     debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'

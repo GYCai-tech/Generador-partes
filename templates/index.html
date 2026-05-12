@@ -203,17 +203,17 @@ body{font-family:var(--fb);font-size:16px;background:var(--bg);color:var(--ink);
 <section>
   <div class="step-label">
     <div class="step-num">1</div>
-    <span class="step-title">Selecciona el pedido</span>
+    <span class="step-title">Selecciona el parte</span>
   </div>
 
   <div class="search-top">
     <div class="filter-tabs" role="group">
       <button class="ftab active" data-tipo="todo">Todos</button>
-      <button class="ftab" data-tipo="numero">Nº Pedido</button>
+      <button class="ftab" data-tipo="numero">Nº Parte</button>
       <button class="ftab" data-tipo="cliente">Cliente</button>
     </div>
     <div class="search-box">
-      <input type="text" id="searchInput" placeholder="Nombre de cliente o número de pedido…" autocomplete="off" autofocus>
+      <input type="text" id="searchInput" placeholder="Nombre de cliente o número de parte…" autocomplete="off" autofocus>
       <span class="sico">
         <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="6"/><line x1="14" y1="14" x2="19" y2="19"/></svg>
       </span>
@@ -224,7 +224,7 @@ body{font-family:var(--fb);font-size:16px;background:var(--bg);color:var(--ink);
   <div class="results-area" id="resultsArea">
     <div class="empty-msg" style="grid-column:1/-1">
       <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 21l-4.35-4.35M11 19A8 8 0 1 0 11 3a8 8 0 0 0 0 16z"/></svg>
-      Busca un pedido para generar el parte
+      Busca un parte para generar el PDF
     </div>
   </div>
 </section>
@@ -233,7 +233,7 @@ body{font-family:var(--fb);font-size:16px;background:var(--bg);color:var(--ink);
 <section class="form-panel" id="formSection" style="display:none">
   <div class="step-label">
     <div class="step-num">2</div>
-    <span class="step-title">Rellena el parte y descarga el PDF</span>
+    <span class="step-title">Revisa los datos y descarga el PDF</span>
     <span id="editBadge" style="display:none;margin-left:auto;font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--orange);background:rgba(232,114,12,.1);padding:2px 9px;border-radius:20px;">✏ Todos los campos son editables</span>
   </div>
 
@@ -270,9 +270,8 @@ body{font-family:var(--fb);font-size:16px;background:var(--bg);color:var(--ink);
 <div class="toast" id="toast"></div>
 
 <script>
-let tipo = 'todo', debounce = null, selCard = null, nextNum = '';
-
-fetch('/api/siguiente-numero').then(r=>r.json()).then(d=>{ nextNum = d.formato; });
+let tipo = 'todo', debounce = null, selCard = null;
+let _parteData = null;
 
 // Tabs
 document.querySelectorAll('.ftab').forEach(b=>{
@@ -287,17 +286,18 @@ document.querySelectorAll('.ftab').forEach(b=>{
 document.getElementById('searchInput').addEventListener('input', e=>{
   clearTimeout(debounce);
   const q = e.target.value.trim();
-  if(!q){ showEmpty('Busca un pedido para generar el parte'); return; }
+  if(!q){ showEmpty('Busca un parte para generar el PDF'); return; }
   debounce = setTimeout(()=>buscar(q), 300);
 });
 
 document.getElementById('btnLimpiar').addEventListener('click',()=>{
   document.getElementById('searchInput').value='';
-  showEmpty('Busca un pedido para generar el parte');
+  showEmpty('Busca un parte para generar el PDF');
   resetDoc();
   if(selCard){selCard.classList.remove('sel');selCard=null;}
   document.getElementById('btnGenerar').disabled=true;
   document.getElementById('formSection').style.display='none';
+  _parteData = null;
 });
 
 document.getElementById('btnGenerar').addEventListener('click', generarPDF);
@@ -309,7 +309,7 @@ function showEmpty(msg){
 async function buscar(q){
   document.getElementById('spinner').classList.add('on');
   try{
-    const data = await fetch(`/api/buscar?q=${encodeURIComponent(q)}&tipo=${tipo}`).then(r=>r.json());
+    const data = await fetch(`/api/buscar-parte?q=${encodeURIComponent(q)}&tipo=${tipo}`).then(r=>r.json());
     renderResults(data);
   }catch{ showEmpty('Error de conexión'); }
   finally{ document.getElementById('spinner').classList.remove('on'); }
@@ -317,12 +317,12 @@ async function buscar(q){
 
 function renderResults(items){
   const area = document.getElementById('resultsArea');
-  if(!items.length){ showEmpty('No se encontraron pedidos'); return; }
+  if(!items.length){ showEmpty('No se encontraron partes'); return; }
   area.innerHTML = items.map((it,i)=>`
     <div class="rcard" data-idx="${i}" style="animation-delay:${i*22}ms">
       <div class="rtop">
         <div class="rcli">${esc(it.Cliente||it.IdCliente)}</div>
-        <div class="rnum">Pedido nº ${esc(String(it.NumPedido))}</div>
+        <div class="rnum">Parte nº ${esc(it.NumParteFormato)}</div>
       </div>
       <div class="rdir">${esc(it.DireccionTrabajo)}${it.LocalidadTrabajo?' — '+it.LocalidadTrabajo:''}</div>
       <div class="rmeta">
@@ -332,14 +332,24 @@ function renderResults(items){
     </div>`).join('');
   area._data = items;
   area.querySelectorAll('.rcard').forEach(card=>{
-    card.addEventListener('click',()=>{
+    card.addEventListener('click', async ()=>{
       if(selCard) selCard.classList.remove('sel');
       card.classList.add('sel'); selCard = card;
-      fillDoc(area._data[parseInt(card.dataset.idx)]);
-      document.getElementById('btnGenerar').disabled=false;
-      const fs = document.getElementById('formSection');
-      fs.style.display='flex';
-      setTimeout(()=>fs.scrollIntoView({behavior:'smooth',block:'start'}), 50);
+      const it = area._data[parseInt(card.dataset.idx)];
+      document.getElementById('spinner').classList.add('on');
+      try {
+        const pd = await fetch(`/api/parte/${it.IdParte}`).then(r=>r.json());
+        _parteData = pd;
+        fillDoc(pd);
+        document.getElementById('btnGenerar').disabled=false;
+        const fs = document.getElementById('formSection');
+        fs.style.display='flex';
+        setTimeout(()=>fs.scrollIntoView({behavior:'smooth',block:'start'}), 50);
+      } catch(e) {
+        showToast('Error al cargar el parte','');
+      } finally {
+        document.getElementById('spinner').classList.remove('on');
+      }
     });
   });
 }
@@ -348,21 +358,31 @@ function fillDoc(it){
   document.getElementById('docCard').classList.add('filled');
   document.getElementById('editBadge').style.display='inline-flex';
 
+  const conceptosHtml = (it.conceptos||[]).map(c=>`
+    <div class="tbl-row" style="grid-template-columns:42px 1fr">
+      <div class="td"><input type="number" value="${esc(c.cant||'1')}" min="0" style="width:100%;text-align:center"></div>
+      <div class="td"><input type="text" value="${esc(c.concepto||'')}" placeholder="Descripción del trabajo…"></div>
+    </div>`).join('') || `
+    <div class="tbl-row" style="grid-template-columns:42px 1fr">
+      <div class="td"><input type="number" value="1" min="0" style="width:100%;text-align:center"></div>
+      <div class="td"><input type="text" value="" placeholder="Descripción del trabajo…"></div>
+    </div>`;
+
   document.getElementById('docBody').innerHTML = `
 
   <!-- Albarán / Presupuesto -->
   <div class="frow frow-alb" style="background:#f0f3f6">
     <div class="fcell"><span class="flbl">Albarán nº</span></div>
-    <div class="fcell" style="padding:5px 8px"><input class="fi mono orange" id="f_albaran" value="${esc(nextNum)}" style="font-size:13px;font-weight:700"></div>
+    <div class="fcell" style="padding:5px 8px"><input class="fi mono orange" id="f_albaran" value="${esc(it.albaran||'')}" style="font-size:13px;font-weight:700"></div>
     <div class="fcell"><span class="flbl">Presupuesto</span></div>
-    <div class="fcell"><input class="fi orange" id="f_presupuesto" placeholder="—" style="font-size:12px"></div>
+    <div class="fcell"><input class="fi orange" id="f_presupuesto" value="${esc(it.presupuesto||'')}" placeholder="—" style="font-size:12px"></div>
   </div>
 
   <!-- Cliente -->
   <div class="frow frow-1">
     <div class="fcell">
       <span class="flbl">Cliente</span>
-      <input class="fi large" id="f_cliente" value="${esc(it.Cliente||it.IdCliente)}">
+      <input class="fi large" id="f_cliente" value="${esc(it.cliente||'')}">
     </div>
   </div>
 
@@ -370,10 +390,10 @@ function fillDoc(it){
   <div class="frow frow-addr">
     <div class="fcell">
       <span class="flbl">Dirección de trabajo</span>
-      <input class="fi" id="f_direccion" value="${esc(it.DireccionTrabajo)}">
+      <input class="fi" id="f_direccion" value="${esc(it.direccion||'')}">
     </div>
     <div class="fcell">
-      <input class="fi" id="f_localidad" value="${esc(it.LocalidadTrabajo)}" placeholder="Localidad">
+      <input class="fi" id="f_localidad" value="${esc(it.localidad||'')}" placeholder="Localidad">
     </div>
   </div>
 
@@ -381,7 +401,7 @@ function fillDoc(it){
   <div class="frow frow-1">
     <div class="fcell">
       <span class="flbl">Contacto</span>
-      <input class="fi mono" id="f_contacto" value="${esc(it.Contacto)}" placeholder="Teléfono">
+      <input class="fi mono" id="f_contacto" value="${esc(it.contacto||'')}" placeholder="Teléfono">
     </div>
   </div>
 
@@ -389,7 +409,7 @@ function fillDoc(it){
   <div class="frow frow-1 gps-row">
     <div class="fcell">
       <span class="flbl">GPS</span>
-      <input class="fi gps" id="f_gps" placeholder="00.00000, 00.00000">
+      <input class="fi gps" id="f_gps" value="${esc(it.gps||'')}" placeholder="00.00000, 00.00000">
     </div>
   </div>
 
@@ -397,7 +417,7 @@ function fillDoc(it){
   <div class="frow frow-1">
     <div class="fcell">
       <span class="flbl">Fecha</span>
-      <input class="fi mono" id="f_fecha" value="${esc(it.FechaFormateada)}" style="color:var(--blue)">
+      <input class="fi mono" id="f_fecha" value="${esc(it.fecha||'')}" style="color:var(--blue)">
     </div>
   </div>
 
@@ -407,12 +427,7 @@ function fillDoc(it){
     <div class="tbl-hdr" style="grid-template-columns:42px 1fr">
       <div class="tc">Cant.</div><div class="tc">Conceptos de trabajo</div>
     </div>
-    <div id="conceptosRows">
-      <div class="tbl-row" style="grid-template-columns:42px 1fr">
-        <div class="td"><input type="number" value="1" min="0" style="width:100%;text-align:center"></div>
-        <div class="td"><input type="text" value="${esc(it.Observaciones||'')}" placeholder="Descripción del trabajo…"></div>
-      </div>
-    </div>
+    <div id="conceptosRows">${conceptosHtml}</div>
     <div style="padding:2px 6px">
       <button class="add-row-btn" onclick="addConcepto()">+ Añadir línea</button>
     </div>
@@ -450,7 +465,7 @@ function fillDoc(it){
   <!-- ══ OBSERVACIONES ══ -->
   <div class="sec-hdr"><span>Observaciones</span></div>
   <div style="border-bottom:1px solid var(--rule)">
-    <textarea class="obs-ta" id="f_obs" placeholder="Observaciones…" rows="3"></textarea>
+    <textarea class="obs-ta" id="f_obs" placeholder="Observaciones…" rows="3">${esc(it.observaciones||'')}</textarea>
   </div>
 
   <!-- ══ GASTOS ══ -->
@@ -480,8 +495,19 @@ function fillDoc(it){
   </div>
   `;
 
-  numOperarios = 2;
-  numHoras = 3;
+  // Operarios precargados desde BD
+  const opsBD = (it.operarios||[]).map(o=>o.nombre||'');
+  numOperarios = Math.max(opsBD.length, 2);
+  _initialOperarios = opsBD;
+
+  // Horas precargadas desde BD
+  const horasBD = it.horas || [];
+  numHoras = Math.max(horasBD.length, 3);
+  _initialHoras = horasBD;
+
+  // Gastos precargados desde BD
+  _initialGastos = it.gastos || [];
+
   fotosData = [];
   renderOperarioRows();
   renderHorasRows();
@@ -491,6 +517,9 @@ function fillDoc(it){
 let numOperarios = 2;
 let numHoras = 3;
 let fotosData = [];
+let _initialOperarios = [];
+let _initialHoras = [];
+let _initialGastos = [];
 
 function handleFotos(input){
   const files = [...input.files];
@@ -528,16 +557,22 @@ function renderHorasRows(){
   const existing = [...container.querySelectorAll('.tbl-row')].map(row=>[...row.querySelectorAll('input')].map(i=>i.value));
   container.innerHTML = '';
   for(let n=0;n<numHoras;n++){
-    const vals = existing[n]||[];
+    const pre = _initialHoras[n] || {};
+    const vals = existing[n] || [];
+    const dia   = vals[0] !== undefined ? vals[0] : (pre.dia||'');
+    const ini   = vals[1] !== undefined ? vals[1] : (pre.inicio||'');
+    const fin   = vals[2] !== undefined ? vals[2] : (pre.final||'');
+    const ops   = vals[3] !== undefined ? vals[3] : (pre.operarios||'');
+    const def   = vals[4] !== undefined ? vals[4] : (pre.definicion||'');
     const div = document.createElement('div');
     div.className = 'tbl-row';
     div.style.gridTemplateColumns = '60px 70px 70px 55px 1fr';
     div.innerHTML = `
-      <div class="td"><input type="text" placeholder="dd/mm" value="${vals[0]||''}"></div>
-      <div class="td"><input type="text" placeholder="08:00" value="${vals[1]||''}"></div>
-      <div class="td"><input type="text" placeholder="14:00" value="${vals[2]||''}"></div>
-      <div class="td"><input type="text" placeholder="1" style="text-align:center" value="${vals[3]||''}"></div>
-      <div class="td"><input type="text" placeholder="" value="${vals[4]||''}"></div>`;
+      <div class="td"><input type="text" placeholder="dd/mm" value="${esc(dia)}"></div>
+      <div class="td"><input type="text" placeholder="08:00" value="${esc(ini)}"></div>
+      <div class="td"><input type="text" placeholder="14:00" value="${esc(fin)}"></div>
+      <div class="td"><input type="text" placeholder="1" style="text-align:center" value="${esc(ops)}"></div>
+      <div class="td"><input type="text" placeholder="" value="${esc(def)}"></div>`;
     container.appendChild(div);
   }
   const btn = document.getElementById('btnRemoveHora');
@@ -553,9 +588,11 @@ function renderOperarioRows(){
   const existing = [...container.querySelectorAll('.op-row input')].map(i=>i.value);
   container.innerHTML = '';
   for(let n=1;n<=numOperarios;n++){
+    const preNombre = _initialOperarios[n-1] || '';
+    const nombre = existing[n-1] !== undefined ? existing[n-1] : preNombre;
     const div = document.createElement('div');
     div.className = 'frow frow-1 op-row';
-    div.innerHTML = `<div class="fcell"><span class="flbl" style="width:18px">${n}º</span><input class="fi" placeholder="Nombre operario ${n}" value="${esc(existing[n-1]||'')}"></div>`;
+    div.innerHTML = `<div class="fcell"><span class="flbl" style="width:18px">${n}º</span><input class="fi" placeholder="Nombre operario ${n}" value="${esc(nombre)}"></div>`;
     container.appendChild(div);
   }
   const btn = document.getElementById('btnRemoveOp');
@@ -569,15 +606,17 @@ function renderGastos(){
   const existing = [...block.querySelectorAll('.gastos-op')].map(op=>[...op.querySelectorAll('input')].map(i=>i.value));
   block.innerHTML = '';
   for(let n=1;n<=numOperarios;n++){
-    const vals = existing[n-1]||[];
+    const vals = existing[n-1] || [];
+    const pre = _initialGastos[n-1] || {};
+    const get = (idx, key) => vals[idx] !== undefined ? vals[idx] : (pre[key]||'');
     const div = document.createElement('div');
     div.className = 'gastos-op';
     div.innerHTML = `<div class="gastos-op-hdr">${n}º Operario</div>`+
-      ['Km.','Dietas','Comidas'].map((c,ci)=>`
+      [['Km.','km_cant','km_total'],['Dietas','dietas_cant','dietas_total'],['Comidas','comidas_cant','comidas_total']].map(([label,kc,kt],ci)=>`
         <div class="gastos-row">
-          <div class="glbl">${c}</div>
-          <div class="gval"><input type="number" placeholder="Cant." min="0" step="0.1" value="${vals[ci*2]||''}"></div>
-          <div class="gtot"><input type="number" placeholder="Total" min="0" step="0.01" value="${vals[ci*2+1]||''}"></div>
+          <div class="glbl">${label}</div>
+          <div class="gval"><input type="number" placeholder="Cant." min="0" step="0.1" value="${get(ci*2,kc)}"></div>
+          <div class="gtot"><input type="number" placeholder="Total" min="0" step="0.01" value="${get(ci*2+1,kt)}"></div>
         </div>`).join('');
     block.appendChild(div);
   }
@@ -608,10 +647,11 @@ function addConcepto(){
 function resetDoc(){
   document.getElementById('docCard').classList.remove('filled');
   document.getElementById('editBadge').style.display='none';
+  _initialOperarios = []; _initialHoras = []; _initialGastos = [];
   document.getElementById('docBody').innerHTML=`
     <div class="doc-empty">
       <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
-      <p>Selecciona un pedido<br>para rellenar el parte</p>
+      <p>Selecciona un parte<br>para generar el PDF</p>
     </div>`;
 }
 
