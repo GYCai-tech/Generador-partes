@@ -14,11 +14,12 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 app = Flask(__name__)
 
-DB_SERVER   = os.environ.get('DB_SERVER',   '10.0.0.6')
-DB_NAME     = os.environ.get('DB_NAME',     'GOMEZYCRESPO')
-DB_USER     = os.environ.get('DB_USER',     'gestor_incidencias')
-DB_PASSWORD = os.environ.get('DB_PASSWORD', 'Auria1973')
-DB_DRIVER   = os.environ.get('DB_DRIVER',  'SQL Server')
+DB_SERVER    = os.environ.get('DB_SERVER',   '10.0.0.6')
+DB_NAME      = os.environ.get('DB_NAME',     'GOMEZYCRESPO')
+DB_USER      = os.environ.get('DB_USER',     'gestor_incidencias')
+DB_PASSWORD  = os.environ.get('DB_PASSWORD', 'Auria1973')
+DB_DRIVER    = os.environ.get('DB_DRIVER',  'SQL Server')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 DB_CONN = (
     f'DRIVER={{{DB_DRIVER}}};'
@@ -627,6 +628,90 @@ def get_parte(id_parte):
         'gastos': gastos,
     }
     return Response(json.dumps(result, default=str), mimetype='application/json')
+
+@app.route('/api/escanear', methods=['POST'])
+def escanear():
+    import json as _json
+    if not GEMINI_API_KEY:
+        return jsonify({'error': 'GEMINI_API_KEY no configurada en el servidor'}), 500
+
+    data = request.get_json()
+    data_url = data.get('image', '')
+    if not data_url:
+        return jsonify({'error': 'No se recibió imagen'}), 400
+
+    try:
+        import google.generativeai as genai
+
+        if ',' in data_url:
+            header, b64data = data_url.split(',', 1)
+            mime_type = header.split(':')[1].split(';')[0] if ':' in header else 'image/jpeg'
+        else:
+            b64data = data_url
+            mime_type = 'image/jpeg'
+
+        img_bytes = base64.b64decode(b64data)
+
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-2.0-flash')
+
+        prompt = """Analiza esta fotografía de un parte de trabajo de la empresa Gómez y Crespo y extrae todos los datos escritos a mano o impresos.
+
+El parte tiene estas secciones:
+- Cabecera: Albarán de trabajo nº, Presupuesto
+- Datos principales: Cliente, Dirección de trabajo, Localidad, Contacto, GPS, Fecha
+- Facturación: tabla con columnas Cant. y Conceptos de trabajo
+- Nombre Operarios: lista de operarios
+- Horas Empleadas: tabla con columnas Día, H. Inicio, H. Final, Operarios, Definición del trabajo
+- Observaciones: texto libre
+- Gastos Imputables: por operario, filas de Km, Dietas, Comidas con Cant. y Total
+- Firmas: zona de firmas (ignorar)
+
+Devuelve ÚNICAMENTE un JSON válido con exactamente esta estructura (sin markdown, sin texto extra):
+{
+  "albaran": "",
+  "presupuesto": "",
+  "cliente": "",
+  "direccion": "",
+  "localidad": "",
+  "contacto": "",
+  "gps": "",
+  "fecha": "",
+  "observaciones": "",
+  "conceptos": [{"cant": "", "concepto": ""}],
+  "operarios": [{"nombre": ""}],
+  "horas": [{"dia": "", "inicio": "", "final": "", "operarios": "", "definicion": ""}],
+  "gastos": [{"km_cant": "", "km_total": "", "dietas_cant": "", "dietas_total": "", "comidas_cant": "", "comidas_total": ""}]
+}
+
+Reglas:
+- Si un campo está vacío o ilegible, usa string vacío ""
+- Para listas, incluye solo las filas con datos reales (omite filas en blanco)
+- La fecha en formato dd-mm-yyyy si es posible
+- Para gastos, un objeto por cada operario que aparezca en esa sección"""
+
+        response = model.generate_content([
+            prompt,
+            {'mime_type': mime_type, 'data': img_bytes}
+        ])
+
+        text = response.text.strip()
+
+        if '```' in text:
+            for part in text.split('```'):
+                part = part.strip()
+                if part.startswith('json'):
+                    part = part[4:].strip()
+                try:
+                    return jsonify(_json.loads(part))
+                except Exception:
+                    continue
+
+        return jsonify(_json.loads(text))
+
+    except Exception as e:
+        return jsonify({'error': f'Error al procesar la imagen: {str(e)}'}), 500
+
 
 if __name__ == '__main__':
     debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'

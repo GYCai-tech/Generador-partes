@@ -200,6 +200,28 @@ body{font-family:var(--fb);font-size:16px;background:var(--bg);color:var(--ink);
 .toast.show{transform:translateY(0);opacity:1}
 .toast.ok{background:#16a34a}
 
+.mtab.active-scan{background:#0f766e;color:#fff}
+
+/* Scan UI */
+.scan-wrap{display:none}
+.scan-wrap.visible{display:flex;flex-direction:column;gap:16px}
+.dropzone{border:2.5px dashed var(--border);border-radius:10px;padding:52px 20px;text-align:center;cursor:pointer;background:var(--white);transition:all var(--t);display:flex;flex-direction:column;align-items:center;gap:10px}
+.dropzone:hover,.dropzone.drag{border-color:#0f766e;background:#f0faf9}
+.dropzone svg{color:#0f766e;opacity:.6}
+.dz-title{font-family:var(--fh);font-size:16px;font-weight:600;color:#0f766e;letter-spacing:.08em}
+.dz-sub{font-size:12px;color:var(--muted)}
+.scan-preview-wrap{display:flex;flex-direction:column;gap:10px;align-items:center}
+.scan-preview-wrap img{max-width:100%;max-height:420px;border-radius:8px;border:1.5px solid var(--border);box-shadow:var(--shadow-md);object-fit:contain}
+.scan-actions{display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap}
+.btn-scan{display:flex;align-items:center;gap:6px;padding:10px 26px;font-family:var(--fh);font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;border-radius:var(--r);cursor:pointer;border:none;transition:all var(--t);background:#0f766e;color:#fff;box-shadow:0 2px 8px rgba(15,118,110,.35)}
+.btn-scan:hover{background:#0d6460;box-shadow:0 4px 12px rgba(15,118,110,.45);transform:translateY(-1px)}
+.btn-scan:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+.btn-scan-clear{display:flex;align-items:center;gap:5px;padding:9px 16px;font-family:var(--fb);font-size:13px;color:var(--muted);background:var(--white);border:1.5px solid var(--border);border-radius:var(--r);cursor:pointer;transition:all var(--t)}
+.btn-scan-clear:hover{color:var(--blue);border-color:var(--blue-mid)}
+.scan-status{text-align:center;font-size:13px;color:var(--muted);min-height:22px}
+.scan-status.err{color:#dc2626;font-weight:500}
+.scan-status.ok{color:#16a34a;font-weight:600}
+
 @media(max-width:700px){.results-area{grid-template-columns:1fr}.search-top{flex-direction:column;align-items:stretch}.frow-2,.frow-addr{grid-template-columns:1fr}.fcell{border-right:none;border-bottom:1px solid var(--rule)}.gastos-block{grid-template-columns:1fr}}
 </style>
 </head>
@@ -223,6 +245,7 @@ body{font-family:var(--fb);font-size:16px;background:var(--bg);color:var(--ink);
   <div class="mode-tabs">
     <button class="mtab active-parte" id="modePartes" data-modo="partes">Partes de trabajo</button>
     <button class="mtab" id="modePedidos" data-modo="pedidos">Pedidos de cliente</button>
+    <button class="mtab" id="modeScan" data-modo="escanear">📷 Escanear parte</button>
   </div>
 
   <div class="search-top">
@@ -244,6 +267,34 @@ body{font-family:var(--fb);font-size:16px;background:var(--bg);color:var(--ink);
     <div class="empty-msg" style="grid-column:1/-1">
       <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 21l-4.35-4.35M11 19A8 8 0 1 0 11 3a8 8 0 0 0 0 16z"/></svg>
       Busca un parte para generar el PDF
+    </div>
+  </div>
+
+  <!-- ── SCAN SECTION ── -->
+  <div class="scan-wrap" id="scanWrap">
+    <div class="dropzone" id="dropzone" onclick="document.getElementById('scanInput').click()">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+        <polyline points="21 15 16 10 5 21"/>
+      </svg>
+      <div class="dz-title">Arrastra la foto aquí o haz clic para seleccionar</div>
+      <div class="dz-sub">JPG, PNG, WEBP — foto del parte rellenado a mano</div>
+    </div>
+    <input type="file" id="scanInput" accept="image/*" capture="environment" style="display:none" onchange="onScanFile(this)">
+
+    <div class="scan-preview-wrap" id="scanPreviewWrap" style="display:none">
+      <img id="scanPreviewImg" src="" alt="Vista previa">
+      <div class="scan-actions">
+        <button class="btn-scan-clear" onclick="clearScan()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          Cambiar foto
+        </button>
+        <button class="btn-scan" id="btnAnalizar" onclick="analizarFoto()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Analizar con IA
+        </button>
+      </div>
+      <div class="scan-status" id="scanStatus"></div>
     </div>
   </div>
 </section>
@@ -299,14 +350,30 @@ fetch('/api/siguiente-numero').then(r=>r.json()).then(d=>{ nextNum = d.formato; 
 document.querySelectorAll('.mtab').forEach(b=>{
   b.addEventListener('click',()=>{
     modo = b.dataset.modo;
-    document.querySelectorAll('.mtab').forEach(x=>{ x.classList.remove('active-parte','active-pedido'); });
-    b.classList.add(modo === 'partes' ? 'active-parte' : 'active-pedido');
-    const ftabNum = document.getElementById('ftabNumero');
-    ftabNum.textContent = modo === 'partes' ? 'Nº Parte' : 'Nº Pedido';
-    const inp = document.getElementById('searchInput');
-    inp.placeholder = modo === 'partes' ? 'Nombre de cliente o número de parte…' : 'Nombre de cliente o número de pedido…';
-    const q = inp.value.trim();
-    if(q) buscar(q); else showEmpty(modo === 'partes' ? 'Busca un parte para generar el PDF' : 'Busca un pedido para generar el parte');
+    document.querySelectorAll('.mtab').forEach(x=>{ x.classList.remove('active-parte','active-pedido','active-scan'); });
+    if(modo === 'partes') b.classList.add('active-parte');
+    else if(modo === 'pedidos') b.classList.add('active-pedido');
+    else b.classList.add('active-scan');
+
+    const searchTop = document.querySelector('.search-top');
+    const resultsArea = document.getElementById('resultsArea');
+    const scanWrap = document.getElementById('scanWrap');
+
+    if(modo === 'escanear'){
+      searchTop.style.display = 'none';
+      resultsArea.style.display = 'none';
+      scanWrap.classList.add('visible');
+    } else {
+      searchTop.style.display = '';
+      resultsArea.style.display = '';
+      scanWrap.classList.remove('visible');
+      const ftabNum = document.getElementById('ftabNumero');
+      ftabNum.textContent = modo === 'partes' ? 'Nº Parte' : 'Nº Pedido';
+      const inp = document.getElementById('searchInput');
+      inp.placeholder = modo === 'partes' ? 'Nombre de cliente o número de parte…' : 'Nombre de cliente o número de pedido…';
+      const q = inp.value.trim();
+      if(q) buscar(q); else showEmpty(modo === 'partes' ? 'Busca un parte para generar el PDF' : 'Busca un pedido para generar el parte');
+    }
   });
 });
 
@@ -805,6 +872,94 @@ function showToast(msg,type){
 function esc(s){
   if(s===null||s===undefined) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── SCAN / ESCANEAR ──────────────────────────────────────────────────────────
+
+let scanDataUrl = null;
+
+// Drag & drop
+const dz = document.getElementById('dropzone');
+dz.addEventListener('dragover', e=>{ e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', ()=>dz.classList.remove('drag'));
+dz.addEventListener('drop', e=>{
+  e.preventDefault(); dz.classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if(file && file.type.startsWith('image/')) loadScanFile(file);
+});
+
+function onScanFile(input){
+  const file = input.files[0];
+  if(file) loadScanFile(file);
+  input.value = '';
+}
+
+function loadScanFile(file){
+  const reader = new FileReader();
+  reader.onload = ev=>{
+    scanDataUrl = ev.target.result;
+    document.getElementById('scanPreviewImg').src = scanDataUrl;
+    document.getElementById('scanPreviewWrap').style.display = 'flex';
+    document.getElementById('dropzone').style.display = 'none';
+    document.getElementById('scanStatus').textContent = '';
+    document.getElementById('scanStatus').className = 'scan-status';
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearScan(){
+  scanDataUrl = null;
+  document.getElementById('scanPreviewImg').src = '';
+  document.getElementById('scanPreviewWrap').style.display = 'none';
+  document.getElementById('dropzone').style.display = '';
+  document.getElementById('scanStatus').textContent = '';
+  document.getElementById('scanStatus').className = 'scan-status';
+}
+
+async function analizarFoto(){
+  if(!scanDataUrl) return;
+  const btn = document.getElementById('btnAnalizar');
+  const status = document.getElementById('scanStatus');
+  btn.disabled = true;
+  status.className = 'scan-status';
+  status.textContent = 'Analizando imagen con IA…';
+  document.getElementById('spinner').classList.add('on');
+
+  try{
+    const res = await fetch('/api/escanear', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({image: scanDataUrl})
+    });
+    const data = await res.json();
+    if(!res.ok || data.error){
+      status.className = 'scan-status err';
+      status.textContent = data.error || 'Error al analizar la imagen';
+      return;
+    }
+
+    // Si no tiene albarán asignado, usar el siguiente número
+    if(!data.albaran) data.albaran = nextNum;
+
+    _parteData = data;
+    fillDoc(data);
+    document.getElementById('btnGenerar').disabled = false;
+
+    // Mostrar formulario y hacer scroll
+    const fs = document.getElementById('formSection');
+    fs.style.display = 'flex';
+    setTimeout(()=>fs.scrollIntoView({behavior:'smooth', block:'start'}), 50);
+
+    status.className = 'scan-status ok';
+    status.textContent = '✓ Datos extraídos — revisa y corrige si es necesario';
+
+  }catch(e){
+    status.className = 'scan-status err';
+    status.textContent = 'Error de conexión con el servidor';
+  }finally{
+    btn.disabled = false;
+    document.getElementById('spinner').classList.remove('on');
+  }
 }
 </script>
 </body>
